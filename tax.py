@@ -6,8 +6,10 @@ from uuid import uuid4
 
 from kintsugi_tax_platform_sdk import SDK, errors, models
 
-from logger import logger
+from logger import get_logger
 from schemas import Address, CreatePaymentIntentRequest, CustomerInfo, LineItem
+
+log = get_logger(__name__)
 
 STRIPE_METADATA_VALUE_LIMIT = 500
 ESTIMATE_ITEMS_METADATA_KEY = "estimate_items"
@@ -86,7 +88,7 @@ def parse_estimate_items_metadata(metadata: dict[str, Any]) -> list[dict[str, An
         try:
             items = json.loads(raw)
         except json.JSONDecodeError:
-            logger.warning("Invalid estimate_items metadata")
+            log.warning("metadata.invalid_estimate_items")
             return []
         if isinstance(items, list):
             return [expand_compact_estimate_item(item) for item in items]
@@ -98,7 +100,7 @@ def parse_estimate_items_metadata(metadata: dict[str, Any]) -> list[dict[str, An
     try:
         legacy = json.loads(legacy_raw)
     except json.JSONDecodeError:
-        logger.warning("Invalid estimate_json metadata")
+        log.warning("metadata.invalid_estimate_json")
         return []
 
     items = legacy.get("transaction_items", [])
@@ -232,9 +234,10 @@ async def estimate_tax(
             exc.raw_response.json()
         )
 
-    logger.info(
-        "Tax estimate complete",
-        external_id=external_id,
+    log.info(
+        "tax.estimate.completed",
+        estimate_id=external_id,
         tax_amount=estimate.total_tax_amount_calculated,
+        tax_rate=estimate.tax_rate_calculated,
     )
     return external_id, estimate

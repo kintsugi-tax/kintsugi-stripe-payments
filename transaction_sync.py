@@ -6,8 +6,10 @@ from kintsugi_tax_platform_sdk import SDK, errors, models
 from stripe import StripeClient
 
 from config import settings
-from logger import logger
+from logger import get_logger
 from tax import parse_estimate_items_metadata, parse_estimate_summary_metadata
+
+log = get_logger(__name__)
 
 
 def stripe_value(obj: Any, key: str, default: Any = None) -> Any:
@@ -157,8 +159,8 @@ def build_transaction_items_from_metadata(
     try:
         line_items = json.loads(snapshot)
     except json.JSONDecodeError:
-        logger.warning(
-            "Invalid line_items_json metadata",
+        log.warning(
+            "metadata.invalid_line_items_json",
             payment_intent_id=payment_intent.id,
         )
         return []
@@ -265,8 +267,9 @@ async def sync_transaction_from_payment_intent(
     metadata = stripe_metadata_dict(payment_intent)
     estimate_id = metadata.get("kintsugi_external_id")
     if not estimate_id:
-        logger.warning(
-            "Skipping Kintsugi transaction sync: missing kintsugi_external_id",
+        log.warning(
+            "kintsugi.sync.skipped",
+            reason="missing_estimate_id",
             payment_intent_id=payment_intent.id,
         )
         return
@@ -324,24 +327,24 @@ async def sync_transaction_from_payment_intent(
         if exc.status_code == 202:
             transaction = models.TransactionRead.model_validate(exc.raw_response.json())
         else:
-            logger.error(
-                "Kintsugi transaction sync failed",
+            log.error(
+                "kintsugi.sync.failed",
                 payment_intent_id=payment_intent.id,
                 status_code=exc.status_code,
                 detail=exc.body,
             )
             return
     except errors.SDKError as exc:
-        logger.error(
-            "Kintsugi transaction sync failed",
+        log.error(
+            "kintsugi.sync.failed",
             payment_intent_id=payment_intent.id,
             status_code=exc.status_code,
             detail=exc.body,
         )
         return
 
-    logger.info(
-        "Kintsugi transaction synced",
+    log.info(
+        "kintsugi.sync.completed",
         payment_intent_id=payment_intent.id,
         kintsugi_transaction_id=transaction.id,
         estimate_id=estimate_id,

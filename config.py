@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LogFormat = Literal["console", "json"]
 
 
 class Settings(BaseSettings):
@@ -15,6 +19,8 @@ class Settings(BaseSettings):
     stripe_processing_fee_fixed_cents: int = 30
     kintsugi_api_key: str
     kintsugi_organization_id: str
+    log_level: str = "INFO"
+    log_format: LogFormat = "console"
 
 
 settings = Settings()

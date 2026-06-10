@@ -4,12 +4,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from stripe import StripeClient
+from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from checkout import build_checkout_session_params
 from config import settings
 from handlers import handle_payment_intent_failed, handle_payment_intent_succeeded
 from kintsugi_client import create_kintsugi_sdk
-from logger import logger
+from logger import configure_logging, get_logger
+from logging_middleware import RequestLoggingMiddleware
 from pricing import (
     build_kintsugi_metadata,
     build_payment_intent_amount_details,
@@ -27,16 +29,22 @@ from tax import estimate_tax
 
 
 load_dotenv()
+configure_logging(log_level=settings.log_level, log_format=settings.log_format)
+
+log = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log.info("app.started")
     async with create_kintsugi_sdk() as kintsugi:
         app.state.kintsugi = kintsugi
         yield
+    log.info("app.stopped")
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(RequestLoggingMiddleware)
 client = StripeClient(api_key=settings.stripe_api_key)
 
 
@@ -55,15 +63,25 @@ async def stripe_webhook(request: Request):
         settings.stripe_webhook_secret,
     )
     event_type, data = event.type, event.data.object
-    match event_type:
-        case "payment_intent.succeeded":
-            await handle_payment_intent_succeeded(
-                data, request.app.state.kintsugi, client
-            )
-        case "payment_intent.canceled" | "payment_intent.payment_failed":
-            await handle_payment_intent_failed(data)
-        case _:
-            logger.info(f"Unknown event type: {event_type}")
+    bind_contextvars(
+        stripe_event_id=event.id,
+        stripe_event_type=event_type,
+    )
+    log.info("webhook.received")
+
+    try:
+        match event_type:
+            case "payment_intent.succeeded":
+                await handle_payment_intent_succeeded(
+                    data, request.app.state.kintsugi, client
+                )
+            case "payment_intent.canceled" | "payment_intent.payment_failed":
+                await handle_payment_intent_failed(data)
+            case _:
+                log.info("webhook.unhandled_event")
+    finally:
+        unbind_contextvars("stripe_event_id", "stripe_event_type")
+
     return {"message": "Webhook received"}
 
 
@@ -112,8 +130,8 @@ async def resolve_payment_request(
         return body
 
     line_item = await get_subscription_line_item(client)
-    logger.info(
-        "Using default subscription product",
+    log.info(
+        "payment.default_product_used",
         product_id=line_item.external_product_id,
         amount=line_item.amount,
     )
@@ -146,10 +164,12 @@ async def stripe_payment(
             status_code=500, detail="Payment intent missing client secret"
         )
 
-    logger.info(
-        "Payment intent created",
+    log.info(
+        "payment_intent.created",
+        checkout_flow="embedded",
         payment_intent_id=payment_intent.id,
-        external_id=external_id,
+        estimate_id=external_id,
+        subtotal_cents=totals.subtotal_cents,
         tax_cents=totals.tax_cents,
         processing_fee_cents=totals.fee_cents,
         charge_cents=totals.charge_cents,
@@ -189,10 +209,12 @@ async def stripe_checkout(
     if not session.url:
         raise HTTPException(status_code=500, detail="Checkout session missing URL")
 
-    logger.info(
-        "Checkout session created",
+    log.info(
+        "checkout_session.created",
+        checkout_flow="hosted",
         session_id=session.id,
-        external_id=external_id,
+        estimate_id=external_id,
+        subtotal_cents=totals.subtotal_cents,
         tax_cents=totals.tax_cents,
         processing_fee_cents=totals.fee_cents,
         charge_cents=totals.charge_cents,
