@@ -51,3 +51,15 @@ class CreatePaymentIntentResponse(BaseModel):
     client_secret: str
     external_id: str
     tax: TaxBreakdown
+
+
+class CreateCheckoutSessionRequest(CreatePaymentIntentRequest):
+    success_url: str | None = None
+    cancel_url: str | None = None
+
+
+class CreateCheckoutSessionResponse(BaseModel):
+    session_id: str
+    checkout_url: str
+    external_id: str
+    tax: TaxBreakdown

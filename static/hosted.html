@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kintsugi Checkout</title>
+  <title>Kintsugi Hosted Checkout</title>
   <link rel="stylesheet" href="/styles.css" />
-  <script src="https://js.stripe.com/v3/"></script>
 </head>
 <body>
   <main class="container">
     <p class="nav-links">
-      <strong>Embedded checkout</strong>
+      <a href="/">Embedded checkout</a>
       <span class="muted">·</span>
-      <a href="/hosted.html">Hosted checkout</a>
+      <strong>Hosted checkout</strong>
     </p>
-    <h1>Checkout</h1>
+    <h1>Hosted Checkout</h1>
+    <p class="muted intro">Tax is calculated with Kintsugi, then you pay on Stripe’s hosted page.</p>
 
     <section class="card">
       <h2>Product</h2>
@@ -66,19 +66,11 @@
 
     <section class="card">
       <h2>Order summary</h2>
-      <div id="summary" class="summary muted">Select a product and continue to calculate tax.</div>
-      <button id="continue" type="button">Continue to payment</button>
-    </section>
-
-    <section id="payment-section" class="card hidden">
-      <h2>Payment</h2>
-      <form id="payment-form">
-        <div id="payment-element"></div>
-        <button id="submit" type="submit">Pay now</button>
-        <p id="message" class="error" role="alert"></p>
-      </form>
+      <div id="summary" class="summary muted">Review your order, then continue to Stripe.</div>
+      <button id="continue" type="button">Continue to Stripe Checkout</button>
+      <p id="message" class="error" role="alert"></p>
     </section>
   </main>
-  <script src="/app.js"></script>
+  <script src="/hosted.js"></script>
 </body>
 </html>
