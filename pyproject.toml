@@ -1,8 +1,9 @@
 [project]
 name = "kintsugi-stripe-payments"
 version = "0.1.0"
-description = "Add your description here"
+description = "Guide and reference implementation for Kintsugi tax + Stripe payments"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.136.3",
