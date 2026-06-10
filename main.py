@@ -1,13 +1,34 @@
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from stripe import StripeClient
 
 from config import settings
+from handlers import handle_payment_intent_failed, handle_payment_intent_succeeded
+from kintsugi_client import create_kintsugi_sdk
 from logger import logger
+from products import get_subscription_line_item
+from schemas import (
+    CreatePaymentIntentRequest,
+    CreatePaymentIntentResponse,
+    TaxBreakdown,
+)
+from tax import dollars_to_cents, estimate_tax
 
 
 load_dotenv()
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with create_kintsugi_sdk() as kintsugi:
+        app.state.kintsugi = kintsugi
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
+client = StripeClient(api_key=settings.stripe_api_key)
 
 
 @app.get("/")
@@ -16,3 +37,146 @@ async def root():
     logger.info(settings.stripe_webhook_secret)
     logger.info(settings.kintsugi_api_key)
     return {"message": "Hello World"}
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("Stripe-Signature")
+    event = client.construct_event(
+        payload,
+        sig_header,
+        settings.stripe_webhook_secret,
+    )
+    event_type, data = event.type, event.data.object
+    match event_type:
+        case "payment_intent.succeeded":
+            await handle_payment_intent_succeeded(data)
+        case "payment_intent.canceled" | "payment_intent.payment_failed":
+            await handle_payment_intent_failed(data)
+        case _:
+            logger.info(f"Unknown event type: {event_type}")
+    return {"message": "Webhook received"}
+
+
+def stripe_product_code(external_product_id: str) -> str:
+    return external_product_id.removeprefix("prod_")[:12]
+
+
+def build_payment_intent_params(
+    body: CreatePaymentIntentRequest,
+    external_id: str,
+    estimate,
+) -> dict:
+    subtotal_cents = sum(dollars_to_cents(item.amount) for item in body.line_items)
+    tax_cents = dollars_to_cents(estimate.total_tax_amount_calculated or "0")
+    total_cents = subtotal_cents + tax_cents
+
+    stripe_line_items = []
+    for request_item, estimate_item in zip(
+        body.line_items,
+        estimate.transaction_items,
+        strict=True,
+    ):
+        quantity = max(int(request_item.quantity), 1)
+        unit_cost = dollars_to_cents(request_item.amount / request_item.quantity)
+        stripe_line_items.append(
+            {
+                "product_name": (
+                    request_item.product_name
+                    or request_item.description
+                    or request_item.external_product_id
+                ),
+                "product_code": stripe_product_code(request_item.external_product_id),
+                "quantity": quantity,
+                "unit_cost": unit_cost,
+                "tax": {
+                    "total_tax_amount": dollars_to_cents(
+                        estimate_item.tax_amount or "0"
+                    ),
+                },
+            }
+        )
+
+    params: dict = {
+        "amount": total_cents,
+        "currency": body.currency.lower(),
+        "automatic_payment_methods": {"enabled": True},
+        "metadata": {
+            "kintsugi_external_id": external_id,
+            "subtotal": str(subtotal_cents),
+            "tax_amount": str(tax_cents),
+        },
+        "amount_details": {"line_items": stripe_line_items},
+    }
+
+    if body.customer.email:
+        params["receipt_email"] = body.customer.email
+
+    if body.customer.name and body.shipping_address.street_1:
+        params["shipping"] = {
+            "name": body.customer.name,
+            "address": {
+                "line1": body.shipping_address.street_1,
+                "line2": body.shipping_address.street_2,
+                "city": body.shipping_address.city,
+                "state": body.shipping_address.state,
+                "postal_code": body.shipping_address.postal_code,
+                "country": body.shipping_address.country,
+            },
+        }
+
+    return params
+
+
+async def resolve_payment_request(
+    body: CreatePaymentIntentRequest,
+) -> CreatePaymentIntentRequest:
+    if body.line_items:
+        return body
+
+    line_item = await get_subscription_line_item(client)
+    logger.info(
+        "Using default subscription product",
+        product_id=line_item.external_product_id,
+        amount=line_item.amount,
+    )
+    return body.model_copy(update={"line_items": [line_item]})
+
+
+@app.post("/stripe/payments")
+async def stripe_payment(
+    body: CreatePaymentIntentRequest,
+    request: Request,
+) -> CreatePaymentIntentResponse:
+    body = await resolve_payment_request(body)
+    external_id, estimate = await estimate_tax(body, request.app.state.kintsugi)
+    params = build_payment_intent_params(body, external_id, estimate)
+
+    payment_intent = await client.v1.payment_intents.create_async(params)
+    if not payment_intent.client_secret:
+        raise HTTPException(
+            status_code=500, detail="Payment intent missing client secret"
+        )
+
+    subtotal_cents = int(params["metadata"]["subtotal"])
+    tax_cents = int(params["metadata"]["tax_amount"])
+
+    logger.info(
+        "Payment intent created",
+        payment_intent_id=payment_intent.id,
+        external_id=external_id,
+        tax_cents=tax_cents,
+    )
+
+    return CreatePaymentIntentResponse(
+        payment_intent_id=payment_intent.id,
+        client_secret=payment_intent.client_secret,
+        external_id=external_id,
+        tax=TaxBreakdown(
+            subtotal=subtotal_cents,
+            tax_amount=tax_cents,
+            total_amount=params["amount"],
+            tax_rate=estimate.tax_rate_calculated,
+        ),
+    )
