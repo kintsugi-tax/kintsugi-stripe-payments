@@ -40,6 +40,8 @@ class CreatePaymentIntentRequest(BaseModel):
 class TaxBreakdown(BaseModel):
     subtotal: int
     tax_amount: int
+    sale_total: int
+    processing_fee: int = 0
     total_amount: int
     tax_rate: str | None = None
 

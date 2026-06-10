@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kintsugi Checkout</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body>
+  <main class="container">
+    <h1>Checkout</h1>
+
+    <section class="card">
+      <h2>Product</h2>
+      <label for="product">Select a product</label>
+      <select id="product" name="product"></select>
+      <label for="quantity">Quantity</label>
+      <input id="quantity" name="quantity" type="number" min="1" step="1" value="1" required />
+      <p id="product-price" class="muted"></p>
+    </section>
+
+    <section class="card">
+      <h2>Customer</h2>
+      <label for="name">Name</label>
+      <input id="name" name="name" type="text" value="Jane Doe" required />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" value="jane@example.com" required />
+    </section>
+
+    <section class="card">
+      <h2>Shipping address</h2>
+      <label for="address-preset">Preset</label>
+      <select id="address-preset">
+        <option value="custom">Custom</option>
+        <option value="ky" selected>Highgrove, KY</option>
+        <option value="ca">San Francisco, CA</option>
+      </select>
+
+      <label for="street">Street</label>
+      <input id="street" name="street" type="text" value="123 Main St" required />
+
+      <label for="city">City</label>
+      <input id="city" name="city" type="text" value="Highgrove" required />
+
+      <div class="row">
+        <div>
+          <label for="state">State</label>
+          <input id="state" name="state" type="text" value="KY" maxlength="2" required />
+        </div>
+        <div>
+          <label for="postal-code">Postal code</label>
+          <input id="postal-code" name="postal-code" type="text" value="40013" required />
+        </div>
+      </div>
+
+      <label for="country">Country</label>
+      <input id="country" name="country" type="text" value="US" maxlength="2" required />
+    </section>
+
+    <section class="card">
+      <h2>Order summary</h2>
+      <div id="summary" class="summary muted">Select a product and continue to calculate tax.</div>
+      <button id="continue" type="button">Continue to payment</button>
+    </section>
+
+    <section id="payment-section" class="card hidden">
+      <h2>Payment</h2>
+      <form id="payment-form">
+        <div id="payment-element"></div>
+        <button id="submit" type="submit">Pay now</button>
+        <p id="message" class="error" role="alert"></p>
+      </form>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
