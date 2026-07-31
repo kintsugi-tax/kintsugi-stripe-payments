@@ -1,0 +1,62 @@
+# Kintsugi Tax + Payments Integration
+
+> How to collect payments with the correct tax — US sales tax, EU VAT, GST/HST and their equivalents in roughly 100 supported countries — by pairing Kintsugi (tax engine) with a payment processor (Stripe in the examples). This repo is a working FastAPI reference implementation of the pattern, plus the guide that explains it.
+
+Integration is three phases: **estimate** tax with Kintsugi before checkout, **charge** `subtotal + tax` with the processor, then **record** a Kintsugi transaction when the payment webhook confirms success. Kintsugi is the single source of truth for rates and amounts — do not enable Stripe Tax (or any processor tax engine) on the same sale.
+
+Kintsugi API surface used here: `POST /tax/estimate` (Phase 1) and `POST /transactions` (Phase 3), authenticated with the `X-API-KEY` header plus `x-organization-id` (`orgn_…`). In the Python SDK those are `tax_estimation.estimate` / `transactions.create` and `Security(api_key_header=…, custom_header=<organization id>)`.
+
+Non-negotiable rules for any integration built from this repo:
+
+- Estimate before charge. Never charge first and calculate tax afterward.
+- The estimate needs at least one `BILL_TO` or `SHIP_TO` address; `SHIP_TO` is preferred for determining tax liability. Each address should carry `type`, `country` (ISO 3166-1 alpha-2), `postal_code`, and `state` where the country has taxable subdivisions — street and city improve accuracy. Tax follows the ship-to jurisdiction, not your business location.
+- Addresses are validated during estimation and the transaction may be **rejected** if validation fails. Each address in the response carries a `status` (`VERIFIED`, `PARTIALLY_VERIFIED`, `INVALID`, `UNVERIFIABLE`, `UNVERIFIED`, `BLANK`) — check it rather than assuming the estimate is trustworthy. Validation and enrichment are US-only, so outside the US expect the address back as you sent it.
+- Do not assume US. Send the real `country` and let Kintsugi pick the regime; do not hardcode a US default or infer a rate yourself.
+- Connect Stripe in Kintsugi and sync products first — `external_product_id` (`prod_…`) must exist in the Kintsugi catalog to resolve a tax classification.
+- Persist the estimate ID (`est_…`) on the payment object's metadata, not only in your own database, so webhooks are self-contained.
+- Sync on the webhook (`payment_intent.succeeded`), not the client callback. Use the payment ID as the idempotency key.
+- Re-fetch the PaymentIntent with `expand=["amount_details.line_items"]` — webhook payloads omit `amount_details`.
+- Processing fees are not part of the taxable sale. Sync `subtotal + tax`, excluding any gross-up fee.
+- Stripe caps each metadata value at 500 characters; chunk `estimate_items` across `estimate_items_0..N` with `estimate_items_parts`.
+
+## Countries and tax regimes
+
+Coverage is roughly 100 countries — the US, Canada, all 27 EU member states, the UK, Australia, New Zealand, Mexico, Japan, India, Singapore, South Africa, the UAE, Switzerland, Norway, Turkey and many more. The three phases are identical everywhere; what changes is which address fields matter and what the tax is called.
+
+- **US** — state and local sales tax. `state` and `postal_code` both drive jurisdiction. This is the only country where Kintsugi validates and enriches the address, and the only one with automatic registration.
+- **Canada** — federal GST/HST plus provincial tiers, so province matters. Federal registration acts as the fallback when no provincial record exists.
+- **EU** — VAT. Send the member state's own `country` code; registration and nexus are held at the bloc level, and `state` is not used for EU addresses.
+- **Everywhere else** — federal-level tax only. Subdivisions do not change the calculation, so `country` + `postal_code` is enough and `state` can be left empty.
+- **Registration coverage is narrower than calculation coverage.** A country where Kintsugi calculates tax is not automatically one where you can register through Kintsugi — confirm before promising a customer either.
+- Send the transaction's real `currency`; the estimate is denominated in it, and `amount` is always in major currency units (not cents).
+
+## Guide
+
+- [Integration guide (full README)](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md): The three phases end to end — prerequisites, request/response shapes, both Stripe patterns, metadata contract, rules of thumb.
+- [Step 0: connect Stripe and sync products](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#step-0-connect-stripe-and-sync-products): Dashboard setup that must happen before any code runs; tax estimates are wrong without it.
+- [Metadata contract](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#metadata-contract): Exact keys written at payment creation and read at webhook time, including the compact per-line JSON encoding (`p`/`n`/`q`/`a`/`t`/`r`/`tb`).
+- [Adapting to other payment processors](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#adapting-to-other-payment-processors): The same three phases with non-Stripe processors.
+
+## Reference implementation
+
+- [tax.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/tax.py): Phase 1 — calls `kintsugi.tax_estimation.estimate_async`, builds transaction items and SHIP_TO addresses, encodes/decodes the chunked Stripe metadata. Read `total_tax_amount_calculated`, `tax_rate_calculated`, `taxable_amount` from the estimate; per-line values are serialized as `tax_amount` / `tax_rate` on `transaction_items[]`.
+- [pricing.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/pricing.py): Charge totals in cents (`subtotal`, `tax`, `sale_total`, `fee`, `charge`) and Stripe `amount_details.line_items` with per-line tax.
+- [main.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/main.py): FastAPI app. `POST /stripe/payments` (embedded → `client_secret`), `POST /stripe/checkout` (hosted → `checkout_url`), `POST /stripe/webhook` (Phase 3).
+- [checkout.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/checkout.py): Hosted Checkout Session params — product lines plus explicit Sales Tax and Processing Fee lines, metadata copied to `payment_intent_data.metadata`. The tax line is hardcoded `"Sales Tax"`; it shows on the customer's receipt, so relabel it (VAT, GST, HST) to match the regime for non-US sales.
+- [transaction_sync.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/transaction_sync.py): Phase 3 — `transactions.create` with `external_id` = `pi_…`, `secondary_external_id` = `est_…`, `source=STRIPE`, `type_=SALE`. Per-line tax from Phase 1 goes in as `tax_amount_imported` / `tax_rate_imported` (imported, not calculated — Kintsugi records what you actually charged).
+- [handlers.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/handlers.py): Webhook handlers for `payment_intent.succeeded` / `payment_intent.failed`.
+- [schemas.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/schemas.py): Pydantic request/response models — `LineItem`, `Address`, `CustomerInfo`, `TaxBreakdown`. **US-shaped defaults:** `Address.country` defaults to `"US"` and `state` is required, and `currency` defaults to `"usd"`. Selling outside the US means making `state` optional and passing the real country and currency — the Kintsugi call itself needs no changes.
+- [fees.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/fees.py): Optional gross-up so the merchant nets the sale total after Stripe fees.
+- [config.py](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/config.py): Settings and required environment variables (`STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`, `KINTSUGI_API_KEY`, `KINTSUGI_ORGANIZATION_ID`).
+
+## Running locally
+
+- [Run instructions](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#run-locally): `uv sync`, `cp .env.example .env`, `uv run uvicorn main:app --reload`, then `stripe listen --forward-to localhost:8000/stripe/webhook`.
+- [.env.example](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/.env.example): Credential template.
+- [Demo pages](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/static): `/` for the embedded Payment Element flow, `/hosted.html` for the Checkout redirect flow.
+
+## Optional
+
+- [Kintsugi](https://kintsugi.io): Product site.
+- [Kintsugi app on the Stripe Marketplace](https://marketplace.stripe.com/apps/kintsugi---sales-tax-automation): Dashboard-level onboarding; the API integration here still needs the Stripe data-source connection.
+- [LICENSE](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/LICENSE): MIT.
