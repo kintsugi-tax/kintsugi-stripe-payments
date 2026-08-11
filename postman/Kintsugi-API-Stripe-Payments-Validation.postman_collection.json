@@ -1,0 +1,1379 @@
+{
+  "info": {
+    "name": "Kintsugi API - Stripe Payments Validation",
+    "description": "Postman suite for EI-1233 covering tax estimation, transaction creation, and GET transaction.\n\nSource: https://trykintsugi.atlassian.net/wiki/spaces/IE/pages/2685927478/EI-1233+Postman+Test+Suite+Documentation\n\nAdapted from the Confluence placeholders to the live Kintsugi API:\n- Tax: POST /v1/tax/estimate (not /v1/transactions/tax)\n- Amounts are major currency units (dollars), not cents\n- Auth headers: X-API-KEY + x-organization-id\n- Create transaction returns 202; status uses COMMITTED\n- Errors are in `detail` (string or validation array), not `error`\n- Refund coverage uses a FULLY_REFUNDED sale with negative amounts (credit-notes endpoint currently 404s for this flow)\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api.trykintsugi.com"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Tax Estimation",
+      "item": [
+        {
+          "name": "TC-TAX-01 \u2014 Happy Path: Standard Taxable Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Valid taxable estimate for a US SHIP_TO address.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ],\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_tax_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response has total_tax_amount_calculated > 0', () => {",
+                  "    const body = pm.response.json();",
+                  "    const tax = parseTax(body.total_tax_amount_calculated);",
+                  "    pm.expect(tax).to.be.above(0);",
+                  "    pm.environment.set('last_tax_amount', String(tax));",
+                  "    pm.environment.set('last_tax_rate', String(body.tax_rate_calculated || ''));",
+                  "});",
+                  "pm.test('Response has transaction_items tax breakdown', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.transaction_items).to.be.an('array').with.lengthOf(1);",
+                  "    pm.expect(body.transaction_items[0]).to.have.property('tax_amount');",
+                  "});",
+                  "pm.test('Currency matches request', () => {",
+                  "    pm.expect(pm.response.json().currency).to.eql('USD');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TAX-02 \u2014 Zero Tax Jurisdiction / No Nexus",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Confluence TC-TAX-02 covered tax-exempt customers. This request targets a no-nexus/zero-tax ship-to as a practical zero-tax check when an exempt customer is not configured.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Zero Tax Co\",\n    \"email\": \"zero@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ],\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main Street\",\n      \"city\": \"Austin\",\n      \"state\": \"TX\",\n      \"postal_code\": \"78701\",\n      \"country\": \"US\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_zero_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Tax amount is zero', () => {",
+                  "    pm.expect(parseTax(pm.response.json().total_tax_amount_calculated)).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TAX-03 \u2014 Multi Line Items",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Multiple line items should each include tax fields where applicable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    },\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_1\",\n      \"external_product_id\": \"{{product_external_id_2}}\",\n      \"product_name\": \"{{product_name_2}}\",\n      \"quantity\": 1,\n      \"amount\": 49.0\n    }\n  ],\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_multi_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Each line item has tax fields', () => {",
+                  "    const items = pm.response.json().transaction_items;",
+                  "    pm.expect(items).to.be.an('array').with.lengthOf(2);",
+                  "    items.forEach(item => {",
+                  "        pm.expect(item).to.have.property('tax_amount');",
+                  "        pm.expect(item).to.have.property('tax_rate');",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TAX-04 \u2014 Missing Required Field: addresses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Omitting destination addresses should return a validation/address error.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ],\n  \"addresses\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_noaddr_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 400 or 422', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "});",
+                  "pm.test('Error references address', () => {",
+                  "    const text = detailText(pm.response.json()).toLowerCase();",
+                  "    pm.expect(text).to.match(/address/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TAX-05 \u2014 Invalid Product External ID",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Unknown external_product_id should be rejected.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"prod_DOES_NOT_EXIST\",\n      \"quantity\": 1,\n      \"amount\": 10.0\n    }\n  ],\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_badprod_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 400 or 422', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "});",
+                  "pm.test('Error references product', () => {",
+                  "    const text = detailText(pm.response.json()).toLowerCase();",
+                  "    pm.expect(text).to.match(/product/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TAX-06 \u2014 Zero Amount Line Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tax/estimate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "tax",
+                "estimate"
+              ]
+            },
+            "description": "Zero-value line items should return zero tax.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{estimate_date}}\",\n  \"external_id\": \"{{estimate_external_id}}\",\n  \"currency\": \"USD\",\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"transaction_items\": [\n    {\n      \"date\": \"{{estimate_date}}\",\n      \"external_id\": \"{{estimate_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"quantity\": 1,\n      \"amount\": 0\n    }\n  ],\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('estimate_date', now);",
+                  "pm.environment.set('estimate_external_id', 'est_amt0_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Tax amount is zero when line item amount is zero', () => {",
+                  "    pm.expect(parseTax(pm.response.json().total_tax_amount_calculated)).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Transaction Creation",
+      "item": [
+        {
+          "name": "TC-TXN-01 \u2014 Happy Path: Create Valid Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Create a COMMITTED SALE linked to a Stripe payment intent external_id.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{stripe_payment_intent}}\",\n  \"secondary_external_id\": \"{{estimate_external_id}}\",\n  \"date\": \"{{txn_date}}\",\n  \"currency\": \"USD\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"COMMITTED\",\n  \"total_amount\": {{txn_total_amount}},\n  \"total_tax_amount_imported\": {{txn_tax_amount}},\n  \"tax_rate_imported\": {{txn_tax_rate}},\n  \"taxable_amount\": 75.0,\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{txn_date}}\",\n      \"external_id\": \"{{stripe_payment_intent}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0,\n      \"tax_amount_imported\": {{txn_tax_amount}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "const pi = 'pi_test_' + Date.now();",
+                  "const est = 'est_txn_' + Date.now();",
+                  "pm.environment.set('txn_date', now);",
+                  "pm.environment.set('stripe_payment_intent', pi);",
+                  "pm.environment.set('estimate_external_id', est);",
+                  "const tax = Number(pm.environment.get('last_tax_amount') || 4.5);",
+                  "const rate = pm.environment.get('last_tax_rate') || '0.06';",
+                  "pm.environment.set('txn_tax_amount', String(tax));",
+                  "pm.environment.set('txn_tax_rate', String(rate));",
+                  "pm.environment.set('txn_total_amount', String(75 + tax));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('Transaction ID is returned', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('id');",
+                  "    pm.environment.set('transaction_id', body.id);",
+                  "});",
+                  "pm.test('Status is COMMITTED', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('COMMITTED');",
+                  "});",
+                  "pm.test('external_id matches Stripe payment intent', () => {",
+                  "    pm.expect(pm.response.json().external_id).to.eql(pm.environment.get('stripe_payment_intent'));",
+                  "});",
+                  "pm.test('date is present', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('date');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TXN-02 \u2014 Idempotency: Duplicate external_id Returns Existing Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Re-submitting the same external_id should return the same transaction.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{stripe_payment_intent}}\",\n  \"secondary_external_id\": \"{{estimate_external_id}}\",\n  \"date\": \"{{txn_date}}\",\n  \"currency\": \"USD\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"COMMITTED\",\n  \"total_amount\": {{txn_total_amount}},\n  \"total_tax_amount_imported\": {{txn_tax_amount}},\n  \"tax_rate_imported\": {{txn_tax_rate}},\n  \"taxable_amount\": 75.0,\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{txn_date}}\",\n      \"external_id\": \"{{stripe_payment_intent}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0,\n      \"tax_amount_imported\": {{txn_tax_amount}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200 or 202', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+                  "});",
+                  "pm.test('Returned ID matches original transaction', () => {",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.environment.get('transaction_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TXN-03 \u2014 Refunded Transaction (FULLY_REFUNDED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Creates a refunded sale with negative amounts. Preferred credit-notes path was unavailable (404) during verification.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{refund_external_id}}\",\n  \"date\": \"{{refund_date}}\",\n  \"currency\": \"USD\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"FULLY_REFUNDED\",\n  \"total_amount\": {{refund_total_amount}},\n  \"total_tax_amount_imported\": {{refund_tax_amount}},\n  \"taxable_amount\": -75.0,\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{refund_date}}\",\n      \"external_id\": \"{{refund_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"product_name\": \"{{product_name}}\",\n      \"quantity\": 1,\n      \"amount\": -75.0,\n      \"tax_amount_imported\": {{refund_tax_amount}}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('refund_date', now);",
+                  "pm.environment.set('refund_external_id', 'pi_refund_' + Date.now());",
+                  "const tax = Number(pm.environment.get('txn_tax_amount') || 4.5);",
+                  "pm.environment.set('refund_tax_amount', String(-Math.abs(tax)));",
+                  "pm.environment.set('refund_total_amount', String(-(75 + Math.abs(tax))));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('Transaction status is FULLY_REFUNDED', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.status).to.eql('FULLY_REFUNDED');",
+                  "    pm.environment.set('refund_transaction_id', body.id);",
+                  "});",
+                  "pm.test('Amount is negative', () => {",
+                  "    pm.expect(parseTax(pm.response.json().total_amount)).to.be.below(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TXN-04 \u2014 Missing customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Creating a transaction without customer should fail validation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{bad_external_id}}\",\n  \"date\": \"{{txn_date}}\",\n  \"currency\": \"USD\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"COMMITTED\",\n  \"total_amount\": 75.0,\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{txn_date}}\",\n      \"external_id\": \"{{bad_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('txn_date', now);",
+                  "pm.environment.set('bad_external_id', 'pi_nocust_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 400 or 422', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "});",
+                  "pm.test('Error references customer', () => {",
+                  "    const text = detailText(pm.response.json()).toLowerCase();",
+                  "    pm.expect(text).to.match(/customer/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TXN-05 \u2014 Invalid Currency Code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Unsupported currency values should be rejected.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{bad_external_id}}\",\n  \"date\": \"{{txn_date}}\",\n  \"currency\": \"ZZZ\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"COMMITTED\",\n  \"total_amount\": 75.0,\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{txn_date}}\",\n      \"external_id\": \"{{bad_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('txn_date', now);",
+                  "pm.environment.set('bad_external_id', 'pi_badcur_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 400 or 422', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 422]);",
+                  "});",
+                  "pm.test('Error references currency', () => {",
+                  "    const text = detailText(pm.response.json()).toLowerCase();",
+                  "    pm.expect(text).to.match(/currency/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-TXN-06 \u2014 Unauthorized Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "invalid-api-key"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Missing/invalid authentication should return 401.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"organization_id\": \"{{organization_id}}\",\n  \"external_id\": \"{{bad_external_id}}\",\n  \"date\": \"{{txn_date}}\",\n  \"currency\": \"USD\",\n  \"type\": \"SALE\",\n  \"source\": \"STRIPE\",\n  \"status\": \"COMMITTED\",\n  \"total_amount\": 75.0,\n  \"customer\": {\n    \"name\": \"Jane Doe\",\n    \"email\": \"jane@example.com\"\n  },\n  \"addresses\": [\n    {\n      \"type\": \"SHIP_TO\",\n      \"street_1\": \"123 Main St\",\n      \"city\": \"Highgrove\",\n      \"state\": \"KY\",\n      \"postal_code\": \"40013\",\n      \"country\": \"US\"\n    }\n  ],\n  \"transaction_items\": [\n    {\n      \"organization_id\": \"{{organization_id}}\",\n      \"date\": \"{{txn_date}}\",\n      \"external_id\": \"{{bad_external_id}}_0\",\n      \"external_product_id\": \"{{product_external_id}}\",\n      \"quantity\": 1,\n      \"amount\": 75.0\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const now = new Date().toISOString();",
+                  "pm.environment.set('txn_date', now);",
+                  "pm.environment.set('bad_external_id', 'pi_unauth_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Error indicates unauthorized', () => {",
+                  "    const text = detailText(pm.response.json()).toLowerCase();",
+                  "    pm.expect(text).to.match(/unauth|invalid|api.?key/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. GET Transaction",
+      "item": [
+        {
+          "name": "TC-GET-01 \u2014 Happy Path: Retrieve Existing Transaction",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "Retrieve the transaction created by TC-TXN-01."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('transaction_id is set from TC-TXN-01', () => {",
+                  "    pm.expect(pm.environment.get('transaction_id')).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ID matches requested transaction', () => {",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.environment.get('transaction_id'));",
+                  "});",
+                  "pm.test('Response has required fields', () => {",
+                  "    const body = pm.response.json();",
+                  "    ['id', 'external_id', 'status', 'currency', 'date', 'transaction_items'].forEach(field => {",
+                  "        pm.expect(body).to.have.property(field);",
+                  "    });",
+                  "});",
+                  "pm.test('Line items are present and non-empty', () => {",
+                  "    pm.expect(pm.response.json().transaction_items).to.be.an('array').with.length.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-GET-02 \u2014 Non-Existent Transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/tran_does_not_exist_xyz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "tran_does_not_exist_xyz"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Error message is present', () => {",
+                  "    pm.expect(pm.response.json()).to.have.property('detail');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-GET-03 \u2014 Malformed Transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/not-a-valid-id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "not-a-valid-id"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 400 or 404', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400, 404]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-GET-04 \u2014 Unauthorized Request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "invalid-api-key"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/{{transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TC-GET-05 \u2014 Verify Refunded Transaction Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-KEY",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "x-organization-id",
+                "value": "{{organization_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/{{refund_transaction_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{refund_transaction_id}}"
+              ]
+            },
+            "description": "Fetch the refunded transaction created by TC-TXN-03."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refund_transaction_id is set from TC-TXN-03', () => {",
+                  "    pm.expect(pm.environment.get('refund_transaction_id')).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function detailText(body) {",
+                  "    const d = body && body.detail;",
+                  "    if (typeof d === 'string') return d;",
+                  "    if (Array.isArray(d)) return JSON.stringify(d);",
+                  "    return JSON.stringify(body || {});",
+                  "}",
+                  "function parseTax(value) {",
+                  "    const n = Number(value);",
+                  "    return Number.isFinite(n) ? n : NaN;",
+                  "}",
+                  "",
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Transaction status is FULLY_REFUNDED', () => {",
+                  "    pm.expect(pm.response.json().status).to.eql('FULLY_REFUNDED');",
+                  "});",
+                  "pm.test('Amount is negative', () => {",
+                  "    pm.expect(parseTax(pm.response.json().total_amount)).to.be.below(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
