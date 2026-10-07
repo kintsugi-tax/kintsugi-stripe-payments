@@ -1,10 +1,10 @@
-from schemas import CreatePaymentIntentRequest
 from pricing import (
     build_kintsugi_metadata,
     compute_charge_totals,
     iter_product_lines,
     stripe_product_code,
 )
+from schemas import CreatePaymentIntentRequest
 
 
 def build_checkout_session_line_items(

@@ -27,7 +27,6 @@ from schemas import (
 )
 from tax import estimate_tax
 
-
 load_dotenv()
 configure_logging(log_level=settings.log_level, log_format=settings.log_format)
 
