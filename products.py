@@ -11,6 +11,10 @@ async def get_subscription_line_item(stripe_client: StripeClient) -> LineItem:
         SUBSCRIPTION_STRIPE_PRODUCT_ID
     )
     default_price = product.default_price
+    if default_price is None:
+        raise ValueError(
+            f"Stripe product {SUBSCRIPTION_STRIPE_PRODUCT_ID} has no default price"
+        )
     price_id = default_price if isinstance(default_price, str) else default_price.id
     price = await stripe_client.v1.prices.retrieve_async(price_id)
 

@@ -13,6 +13,7 @@ from kintsugi_client import create_kintsugi_sdk
 from logger import configure_logging, get_logger
 from logging_middleware import RequestLoggingMiddleware
 from pricing import (
+    ChargeTotals,
     build_kintsugi_metadata,
     build_payment_intent_amount_details,
     compute_charge_totals,
@@ -55,7 +56,7 @@ async def api_config():
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
-    sig_header = request.headers.get("Stripe-Signature")
+    sig_header = request.headers.get("Stripe-Signature", "")
     event = client.construct_event(
         payload,
         sig_header,
@@ -88,7 +89,7 @@ def build_payment_intent_params(
     body: CreatePaymentIntentRequest,
     external_id: str,
     estimate,
-) -> dict:
+) -> tuple[dict, ChargeTotals]:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "embedded"
@@ -157,6 +158,8 @@ async def stripe_payment(
     external_id, estimate = await estimate_tax(body, request.app.state.kintsugi)
     params, totals = build_payment_intent_params(body, external_id, estimate)
 
+    # The Stripe SDK types params as a TypedDict; we build a plain dict.
+    # pyrefly: ignore[bad-argument-type]
     payment_intent = await client.v1.payment_intents.create_async(params)
     if not payment_intent.client_secret:
         raise HTTPException(
@@ -187,8 +190,10 @@ async def stripe_checkout(
     body: CreateCheckoutSessionRequest,
     request: Request,
 ) -> CreateCheckoutSessionResponse:
-    body = await resolve_payment_request(body)
-    external_id, estimate = await estimate_tax(body, request.app.state.kintsugi)
+    payment_request = await resolve_payment_request(body)
+    external_id, estimate = await estimate_tax(
+        payment_request, request.app.state.kintsugi
+    )
 
     success_url = body.success_url or (
         f"{str(request.base_url).rstrip('/')}/complete.html"
@@ -197,13 +202,15 @@ async def stripe_checkout(
     cancel_url = body.cancel_url or f"{str(request.base_url).rstrip('/')}/hosted.html"
 
     params, totals = build_checkout_session_params(
-        body,
+        payment_request,
         external_id,
         estimate,
         success_url=success_url,
         cancel_url=cancel_url,
     )
 
+    # The Stripe SDK types params as a TypedDict; we build a plain dict.
+    # pyrefly: ignore[bad-argument-type]
     session = await client.v1.checkout.sessions.create_async(params)
     if not session.url:
         raise HTTPException(status_code=500, detail="Checkout session missing URL")

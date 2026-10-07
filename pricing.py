@@ -32,7 +32,9 @@ def compute_charge_totals(
     body: CreatePaymentIntentRequest,
     estimate,
 ) -> ChargeTotals:
-    subtotal_cents = sum(dollars_to_cents(item.amount) for item in body.line_items)
+    subtotal_cents = sum(
+        dollars_to_cents(item.amount) for item in body.line_items or []
+    )
     tax_cents = dollars_to_cents(estimate.total_tax_amount_calculated or "0")
     sale_total_cents = subtotal_cents + tax_cents
     fee_cents = processing_fee_cents(sale_total_cents)
@@ -67,7 +69,7 @@ def iter_product_lines(
 ) -> list[ProductLineContext]:
     lines: list[ProductLineContext] = []
     for request_item, estimate_item in zip(
-        body.line_items,
+        body.line_items or [],
         estimate.transaction_items,
         strict=True,
     ):

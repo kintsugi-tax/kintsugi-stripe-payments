@@ -1,4 +1,5 @@
 from pricing import (
+    ChargeTotals,
     build_kintsugi_metadata,
     compute_charge_totals,
     iter_product_lines,
@@ -69,7 +70,7 @@ def build_checkout_session_params(
     *,
     success_url: str,
     cancel_url: str,
-) -> dict:
+) -> tuple[dict, ChargeTotals]:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "hosted"

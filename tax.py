@@ -224,7 +224,7 @@ async def estimate_tax(
             external_id=external_id,
             currency=models.CurrencyEnum(body.currency.upper()),
             transaction_items=build_transaction_items(
-                body.line_items, external_id, now
+                body.line_items or [], external_id, now
             ),
             addresses=build_addresses(body.shipping_address),
             customer=customer,
