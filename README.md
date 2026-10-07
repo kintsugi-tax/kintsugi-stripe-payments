@@ -303,9 +303,9 @@ This project implements both Stripe patterns with the Kintsugi Python SDK.
 After completing [Step 0: Connect Stripe and sync products](#step-0-connect-stripe-and-sync-products):
 
 ```bash
-uv sync
+poetry install
 cp .env.example .env   # fill in Stripe + Kintsugi keys
-uv run uvicorn main:app --reload
+poetry run uvicorn main:app --reload
 ```
 
 Forward webhooks:
