@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
+from kintsugi_tax_platform_sdk import models
 from stripe import StripeClient
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
@@ -13,7 +14,7 @@ from kintsugi_client import create_kintsugi_sdk
 from logger import configure_logging, get_logger
 from logging_middleware import RequestLoggingMiddleware
 from pricing import (
-    ChargeTotals,
+    PaymentParams,
     build_kintsugi_metadata,
     build_payment_intent_amount_details,
     compute_charge_totals,
@@ -89,8 +90,8 @@ async def stripe_webhook(request: Request):
 def build_payment_intent_params(
     body: ResolvedPaymentRequest,
     external_id: str,
-    estimate,
-) -> tuple[dict, ChargeTotals]:
+    estimate: models.TransactionEstimateResponse,
+) -> PaymentParams:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "embedded"
@@ -121,19 +122,17 @@ def build_payment_intent_params(
             },
         }
 
-    return params, totals
+    return PaymentParams(params, totals)
 
 
 async def resolve_payment_request(
     body: CreatePaymentIntentRequest,
 ) -> ResolvedPaymentRequest:
+    request_fields = body.model_dump(
+        exclude={"line_items", "success_url", "cancel_url"}
+    )
     if body.line_items:
-        return ResolvedPaymentRequest(
-            currency=body.currency,
-            line_items=body.line_items,
-            customer=body.customer,
-            shipping_address=body.shipping_address,
-        )
+        return ResolvedPaymentRequest(**request_fields, line_items=body.line_items)
 
     line_item = await get_subscription_line_item(client)
     log.info(
@@ -141,12 +140,7 @@ async def resolve_payment_request(
         product_id=line_item.external_product_id,
         amount=line_item.amount,
     )
-    return ResolvedPaymentRequest(
-        currency=body.currency,
-        line_items=[line_item],
-        customer=body.customer,
-        shipping_address=body.shipping_address,
-    )
+    return ResolvedPaymentRequest(**request_fields, line_items=[line_item])
 
 
 def tax_breakdown_from_totals(totals, tax_rate: str | None) -> TaxBreakdown:

@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from typing import NamedTuple
+
+from kintsugi_tax_platform_sdk import models
 
 from fees import processing_fee_cents
 from schemas import LineItem, ResolvedPaymentRequest
@@ -12,6 +15,11 @@ class ChargeTotals:
     sale_total_cents: int
     fee_cents: int
     charge_cents: int
+
+
+class PaymentParams(NamedTuple):
+    params: dict
+    totals: ChargeTotals
 
 
 @dataclass(frozen=True)
@@ -30,7 +38,7 @@ def stripe_product_code(external_product_id: str) -> str:
 
 def compute_charge_totals(
     body: ResolvedPaymentRequest,
-    estimate,
+    estimate: models.TransactionEstimateResponse,
 ) -> ChargeTotals:
     subtotal_cents = sum(dollars_to_cents(item.amount) for item in body.line_items)
     tax_cents = dollars_to_cents(estimate.total_tax_amount_calculated or "0")
@@ -48,7 +56,7 @@ def compute_charge_totals(
 
 def build_kintsugi_metadata(
     external_id: str,
-    estimate,
+    estimate: models.TransactionEstimateResponse,
     totals: ChargeTotals,
 ) -> dict[str, str]:
     return build_payment_intent_metadata(
@@ -63,7 +71,7 @@ def build_kintsugi_metadata(
 
 def iter_product_lines(
     body: ResolvedPaymentRequest,
-    estimate,
+    estimate: models.TransactionEstimateResponse,
 ) -> list[ProductLineContext]:
     lines: list[ProductLineContext] = []
     for request_item, estimate_item in zip(
@@ -93,7 +101,7 @@ def iter_product_lines(
 
 def build_payment_intent_amount_details(
     body: ResolvedPaymentRequest,
-    estimate,
+    estimate: models.TransactionEstimateResponse,
     totals: ChargeTotals,
 ) -> list[dict]:
     line_items = [

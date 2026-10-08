@@ -30,11 +30,14 @@ class LineItem(BaseModel):
     product_name: str | None = None
 
 
-class CreatePaymentIntentRequest(BaseModel):
+class PaymentRequestBase(BaseModel):
     currency: str = Field(default="usd", min_length=3, max_length=3)
-    line_items: list[LineItem] | None = None
     customer: CustomerInfo
     shipping_address: Address
+
+
+class CreatePaymentIntentRequest(PaymentRequestBase):
+    line_items: list[LineItem] | None = None
 
 
 class TaxBreakdown(BaseModel):
@@ -53,13 +56,10 @@ class CreatePaymentIntentResponse(BaseModel):
     tax: TaxBreakdown
 
 
-class ResolvedPaymentRequest(BaseModel):
+class ResolvedPaymentRequest(PaymentRequestBase):
     """A payment request after `resolve_payment_request` filled in line items."""
 
-    currency: str
     line_items: list[LineItem] = Field(min_length=1)
-    customer: CustomerInfo
-    shipping_address: Address
 
 
 class CreateCheckoutSessionRequest(CreatePaymentIntentRequest):

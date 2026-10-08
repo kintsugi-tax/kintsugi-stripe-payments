@@ -2,18 +2,18 @@ default_language_version:
   python: python3.14
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.0
+    rev: 13a6bda8ea7612b3aec844ded16569d424b9a1ab  # frozen: v0.13.0
     hooks:
       - id: ruff-format
       - id: ruff
         args: [--fix]
   - repo: https://github.com/facebook/pyrefly-pre-commit
-    rev: 0.0.1
+    rev: bf344e951681b26166603891891bdaacb5d9b443  # frozen: 0.0.1
     hooks:
       - id: pyrefly-typecheck-system
         pass_filenames: false
         always_run: true
   - repo: https://github.com/python-poetry/poetry
-    rev: 2.5.1
+    rev: 94b6e35b9091991887aa54feeb3771a86d3bd692  # frozen: 2.5.1
     hooks:
       - id: poetry-check
