@@ -53,6 +53,15 @@ class CreatePaymentIntentResponse(BaseModel):
     tax: TaxBreakdown
 
 
+class ResolvedPaymentRequest(BaseModel):
+    """A payment request after `resolve_payment_request` filled in line items."""
+
+    currency: str
+    line_items: list[LineItem] = Field(min_length=1)
+    customer: CustomerInfo
+    shipping_address: Address
+
+
 class CreateCheckoutSessionRequest(CreatePaymentIntentRequest):
     success_url: str | None = None
     cancel_url: str | None = None

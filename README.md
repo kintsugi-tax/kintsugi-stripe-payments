@@ -300,6 +300,8 @@ This project implements both Stripe patterns with the Kintsugi Python SDK.
 
 ### Run locally
 
+Requires Python 3.13+ and Poetry 2.x. Run `pre-commit` and `git commit` through `poetry run` so the Pyrefly hook sees the virtualenv.
+
 After completing [Step 0: Connect Stripe and sync products](#step-0-connect-stripe-and-sync-products):
 
 ```bash

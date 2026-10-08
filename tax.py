@@ -7,7 +7,7 @@ from uuid import uuid4
 from kintsugi_tax_platform_sdk import SDK, errors, models
 
 from logger import get_logger
-from schemas import Address, CreatePaymentIntentRequest, CustomerInfo, LineItem
+from schemas import Address, CustomerInfo, LineItem, ResolvedPaymentRequest
 
 log = get_logger(__name__)
 
@@ -211,7 +211,7 @@ def build_payment_intent_metadata(
 
 
 async def estimate_tax(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     kintsugi: SDK,
 ) -> tuple[str, models.TransactionEstimateResponse]:
     now = datetime.now(UTC)
@@ -224,7 +224,7 @@ async def estimate_tax(
             external_id=external_id,
             currency=models.CurrencyEnum(body.currency.upper()),
             transaction_items=build_transaction_items(
-                body.line_items or [], external_id, now
+                body.line_items, external_id, now
             ),
             addresses=build_addresses(body.shipping_address),
             customer=customer,

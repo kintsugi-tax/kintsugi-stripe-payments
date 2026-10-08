@@ -51,7 +51,7 @@ Coverage is roughly 100 countries — the US, Canada, all 27 EU member states, t
 
 ## Running locally
 
-- [Run instructions](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#run-locally): `poetry install`, `cp .env.example .env`, `poetry run uvicorn main:app --reload`, then `stripe listen --forward-to localhost:8000/stripe/webhook`.
+- [Run instructions](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/README.md#run-locally): requires Python 3.13+ and Poetry 2.x; `poetry install`, `cp .env.example .env`, `poetry run uvicorn main:app --reload`, then `stripe listen --forward-to localhost:8000/stripe/webhook`.
 - [.env.example](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/.env.example): Credential template.
 - [Demo pages](https://github.com/kintsugi-tax/kintsugi-stripe-payments/blob/main/static): `/` for the embedded Payment Element flow, `/hosted.html` for the Checkout redirect flow.
 

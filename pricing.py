@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from fees import processing_fee_cents
-from schemas import CreatePaymentIntentRequest, LineItem
+from schemas import LineItem, ResolvedPaymentRequest
 from tax import build_payment_intent_metadata, dollars_to_cents
 
 
@@ -29,12 +29,10 @@ def stripe_product_code(external_product_id: str) -> str:
 
 
 def compute_charge_totals(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     estimate,
 ) -> ChargeTotals:
-    subtotal_cents = sum(
-        dollars_to_cents(item.amount) for item in body.line_items or []
-    )
+    subtotal_cents = sum(dollars_to_cents(item.amount) for item in body.line_items)
     tax_cents = dollars_to_cents(estimate.total_tax_amount_calculated or "0")
     sale_total_cents = subtotal_cents + tax_cents
     fee_cents = processing_fee_cents(sale_total_cents)
@@ -64,12 +62,12 @@ def build_kintsugi_metadata(
 
 
 def iter_product_lines(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     estimate,
 ) -> list[ProductLineContext]:
     lines: list[ProductLineContext] = []
     for request_item, estimate_item in zip(
-        body.line_items or [],
+        body.line_items,
         estimate.transaction_items,
         strict=True,
     ):
@@ -94,7 +92,7 @@ def iter_product_lines(
 
 
 def build_payment_intent_amount_details(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     estimate,
     totals: ChargeTotals,
 ) -> list[dict]:

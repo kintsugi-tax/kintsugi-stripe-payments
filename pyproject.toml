@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Guide and reference implementation for Kintsugi tax + Stripe payments"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.13,<3.15"
+requires-poetry = ">=2.1"
 dependencies = [
     "fastapi[standard]~=0.136.3",
     "kintsugi-tax-platform-sdk~=0.11.0",
@@ -36,7 +37,7 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4"]
 [tool.pyrefly]
 project-excludes = ["**/__pycache__", "**/node_modules", "**/.*"]
 python-platform = "linux"
-python-version = "3.14.0"
+python-version = "3.13.0"
 infer-with-first-use = false
 search-path = ["."]
 

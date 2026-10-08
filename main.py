@@ -24,6 +24,7 @@ from schemas import (
     CreateCheckoutSessionResponse,
     CreatePaymentIntentRequest,
     CreatePaymentIntentResponse,
+    ResolvedPaymentRequest,
     TaxBreakdown,
 )
 from tax import estimate_tax
@@ -86,7 +87,7 @@ async def stripe_webhook(request: Request):
 
 
 def build_payment_intent_params(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     external_id: str,
     estimate,
 ) -> tuple[dict, ChargeTotals]:
@@ -125,9 +126,14 @@ def build_payment_intent_params(
 
 async def resolve_payment_request(
     body: CreatePaymentIntentRequest,
-) -> CreatePaymentIntentRequest:
+) -> ResolvedPaymentRequest:
     if body.line_items:
-        return body
+        return ResolvedPaymentRequest(
+            currency=body.currency,
+            line_items=body.line_items,
+            customer=body.customer,
+            shipping_address=body.shipping_address,
+        )
 
     line_item = await get_subscription_line_item(client)
     log.info(
@@ -135,7 +141,12 @@ async def resolve_payment_request(
         product_id=line_item.external_product_id,
         amount=line_item.amount,
     )
-    return body.model_copy(update={"line_items": [line_item]})
+    return ResolvedPaymentRequest(
+        currency=body.currency,
+        line_items=[line_item],
+        customer=body.customer,
+        shipping_address=body.shipping_address,
+    )
 
 
 def tax_breakdown_from_totals(totals, tax_rate: str | None) -> TaxBreakdown:
@@ -154,9 +165,11 @@ async def stripe_payment(
     body: CreatePaymentIntentRequest,
     request: Request,
 ) -> CreatePaymentIntentResponse:
-    body = await resolve_payment_request(body)
-    external_id, estimate = await estimate_tax(body, request.app.state.kintsugi)
-    params, totals = build_payment_intent_params(body, external_id, estimate)
+    payment_request = await resolve_payment_request(body)
+    external_id, estimate = await estimate_tax(
+        payment_request, request.app.state.kintsugi
+    )
+    params, totals = build_payment_intent_params(payment_request, external_id, estimate)
 
     # The Stripe SDK types params as a TypedDict; we build a plain dict.
     # pyrefly: ignore[bad-argument-type]

@@ -5,11 +5,11 @@ from pricing import (
     iter_product_lines,
     stripe_product_code,
 )
-from schemas import CreatePaymentIntentRequest
+from schemas import ResolvedPaymentRequest
 
 
 def build_checkout_session_line_items(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     estimate,
     totals,
 ) -> list[dict]:
@@ -64,7 +64,7 @@ def build_checkout_session_line_items(
 
 
 def build_checkout_session_params(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     external_id: str,
     estimate,
     *,
