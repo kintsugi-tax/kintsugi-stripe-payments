@@ -1,15 +1,18 @@
-from schemas import CreatePaymentIntentRequest
+from kintsugi_tax_platform_sdk import models
+
 from pricing import (
+    PaymentParams,
     build_kintsugi_metadata,
     compute_charge_totals,
     iter_product_lines,
     stripe_product_code,
 )
+from schemas import ResolvedPaymentRequest
 
 
 def build_checkout_session_line_items(
-    body: CreatePaymentIntentRequest,
-    estimate,
+    body: ResolvedPaymentRequest,
+    estimate: models.TransactionEstimateResponse,
     totals,
 ) -> list[dict]:
     currency = body.currency.lower()
@@ -63,13 +66,13 @@ def build_checkout_session_line_items(
 
 
 def build_checkout_session_params(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     external_id: str,
-    estimate,
+    estimate: models.TransactionEstimateResponse,
     *,
     success_url: str,
     cancel_url: str,
-) -> dict:
+) -> PaymentParams:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "hosted"
@@ -99,4 +102,4 @@ def build_checkout_session_params(
             },
         }
 
-    return params, totals
+    return PaymentParams(params, totals)

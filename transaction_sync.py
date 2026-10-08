@@ -281,7 +281,9 @@ async def sync_transaction_from_payment_intent(
         processing_fee = int(metadata.get("processing_fee", 0))
         charge_cents = int(stripe_value(payment_intent, "amount", 0))
         sale_total_cents = (
-            charge_cents - processing_fee if charge_cents else subtotal_cents + tax_cents
+            charge_cents - processing_fee
+            if charge_cents
+            else subtotal_cents + tax_cents
         )
     estimate_snapshot = parse_estimate_summary_metadata(metadata)
     tax_rate_imported = parse_optional_float(
