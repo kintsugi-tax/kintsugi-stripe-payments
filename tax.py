@@ -1,13 +1,13 @@
 import json
 from datetime import UTC, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import uuid4
 
 from kintsugi_tax_platform_sdk import SDK, errors, models
 
 from logger import get_logger
-from schemas import Address, CreatePaymentIntentRequest, CustomerInfo, LineItem
+from schemas import Address, CustomerInfo, LineItem, ResolvedPaymentRequest
 
 log = get_logger(__name__)
 
@@ -79,7 +79,9 @@ def decode_stripe_metadata_chunks(metadata: dict[str, Any], key: str) -> str | N
         return None
 
     part_count = int(metadata[parts_key])
-    return "".join(str(metadata.get(f"{key}_{index}", "")) for index in range(part_count))
+    return "".join(
+        str(metadata.get(f"{key}_{index}", "")) for index in range(part_count)
+    )
 
 
 def parse_estimate_items_metadata(metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -117,9 +119,11 @@ def parse_estimate_summary_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             legacy = {}
 
     return {
-        "tax_rate_calculated": metadata.get("tax_rate") or legacy.get("tax_rate_calculated"),
+        "tax_rate_calculated": metadata.get("tax_rate")
+        or legacy.get("tax_rate_calculated"),
         "total_tax_amount_calculated": legacy.get("total_tax_amount_calculated"),
-        "taxable_amount": metadata.get("taxable_amount") or legacy.get("taxable_amount"),
+        "taxable_amount": metadata.get("taxable_amount")
+        or legacy.get("taxable_amount"),
     }
 
 
@@ -207,7 +211,7 @@ def build_payment_intent_metadata(
 
 
 async def estimate_tax(
-    body: CreatePaymentIntentRequest,
+    body: ResolvedPaymentRequest,
     kintsugi: SDK,
 ) -> tuple[str, models.TransactionEstimateResponse]:
     now = datetime.now(UTC)
