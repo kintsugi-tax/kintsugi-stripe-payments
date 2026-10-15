@@ -355,7 +355,7 @@ Request body (both payment endpoints):
 }
 ```
 
-`amount` is the **line subtotal** in dollars. Hosted checkout accepts optional `success_url` and `cancel_url`.
+`amount` is the **line subtotal** in dollars. Hosted checkout accepts optional `success_url` and `cancel_url`, which must use the same origin as the request (the API returns `400` otherwise).
 
 ### Code map
 
@@ -368,6 +368,15 @@ transaction_sync.py  Phase 3 — Kintsugi transaction
 handlers.py          Webhook → sync
 ```
 
+### Security notes
+
+This is a sample, so a few choices keep the demo short and are not production defaults.
+
+* **The client sets the price.** `line_items[].amount` comes from the request body, so any caller can choose what they pay. In production, look up the price server-side from the Stripe product or your catalog using `external_product_id`, and ignore any client-supplied amount.
+* **No authentication on the payment routes.** `POST /stripe/payments` and `POST /stripe/checkout` are open. Put them behind your own user session and add rate limiting before you expose them.
+* **Redirect URLs are same-origin only.** `success_url` and `cancel_url` must match the request origin. Behind a proxy that rewrites the host, make sure `request.base_url` reflects the public URL, or the check rejects valid requests.
+* **Webhooks are verified and re-fetched.** A bad or missing `Stripe-Signature` returns `400`. The handler re-fetches the PaymentIntent and only syncs to Kintsugi when its status is `succeeded`.
+
 ### Environment variables
 
 | Variable | Description |
@@ -379,6 +388,10 @@ handlers.py          Webhook → sync
 | `KINTSUGI_ORGANIZATION_ID` | Org ID (`orgn_…`) |
 | `STRIPE_PASS_PROCESSING_FEE_TO_CUSTOMER` | Gross up charge for Stripe fees (default `true`) |
 | `LOG_LEVEL` / `LOG_FORMAT` | Structured logging (`console` or `json`) |
+
+`.env.example` holds placeholders only. Replace them with your own test-mode keys, and never commit a real key.
+
+Run the tests with `poetry run pytest`. They mock Stripe and Kintsugi, so no keys or network are needed.
 
 ---
 

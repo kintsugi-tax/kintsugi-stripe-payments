@@ -1,8 +1,15 @@
 from kintsugi_tax_platform_sdk import models
+from stripe.params.checkout import (
+    SessionCreateParams,
+    SessionCreateParamsLineItem,
+    SessionCreateParamsPaymentIntentDataShippingAddress,
+)
 
 from pricing import (
+    ChargeTotals,
     PaymentParams,
     build_kintsugi_metadata,
+    build_shipping_address,
     compute_charge_totals,
     iter_product_lines,
     stripe_product_code,
@@ -13,10 +20,10 @@ from schemas import ResolvedPaymentRequest
 def build_checkout_session_line_items(
     body: ResolvedPaymentRequest,
     estimate: models.TransactionEstimateResponse,
-    totals,
-) -> list[dict]:
+    totals: ChargeTotals,
+) -> list[SessionCreateParamsLineItem]:
     currency = body.currency.lower()
-    line_items: list[dict] = []
+    line_items: list[SessionCreateParamsLineItem] = []
 
     for line in iter_product_lines(body, estimate):
         line_items.append(
@@ -72,12 +79,12 @@ def build_checkout_session_params(
     *,
     success_url: str,
     cancel_url: str,
-) -> PaymentParams:
+) -> PaymentParams[SessionCreateParams]:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "hosted"
 
-    params: dict = {
+    params: SessionCreateParams = {
         "mode": "payment",
         "success_url": success_url,
         "cancel_url": cancel_url,
@@ -89,17 +96,15 @@ def build_checkout_session_params(
     if body.customer.email:
         params["customer_email"] = body.customer.email
 
+    # Stripe requires a recipient name and a street line to accept shipping.
     if body.customer.name and body.shipping_address.street_1:
         params["payment_intent_data"]["shipping"] = {
             "name": body.customer.name,
-            "address": {
-                "line1": body.shipping_address.street_1,
-                "line2": body.shipping_address.street_2,
-                "city": body.shipping_address.city,
-                "state": body.shipping_address.state,
-                "postal_code": body.shipping_address.postal_code,
-                "country": body.shipping_address.country,
-            },
+            # Stripe's checkout and PaymentIntent address types are separate
+            # TypedDicts with the same keys, so copy into the checkout one.
+            "address": SessionCreateParamsPaymentIntentDataShippingAddress(
+                **build_shipping_address(body.shipping_address)
+            ),
         }
 
     return PaymentParams(params, totals)

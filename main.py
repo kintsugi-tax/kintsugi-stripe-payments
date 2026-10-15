@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from kintsugi_tax_platform_sdk import models
-from stripe import StripeClient
+from stripe import SignatureVerificationError, StripeClient
+from stripe.params import PaymentIntentCreateParams
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from checkout import build_checkout_session_params
@@ -17,6 +19,7 @@ from pricing import (
     PaymentParams,
     build_kintsugi_metadata,
     build_payment_intent_amount_details,
+    build_shipping,
     compute_charge_totals,
 )
 from products import get_subscription_line_item
@@ -59,11 +62,16 @@ async def api_config():
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature", "")
-    event = client.construct_event(
-        payload,
-        sig_header,
-        settings.stripe_webhook_secret,
-    )
+    try:
+        event = client.construct_event(
+            payload,
+            sig_header,
+            settings.stripe_webhook_secret,
+        )
+    except (SignatureVerificationError, ValueError) as exc:
+        # A caller-supplied bad signature or body is a client error, not a 500.
+        log.warning("webhook.rejected", reason=type(exc).__name__)
+        raise HTTPException(status_code=400, detail="Invalid webhook") from exc
     event_type, data = event.type, event.data.object
     bind_contextvars(
         stripe_event_id=event.id,
@@ -91,12 +99,12 @@ def build_payment_intent_params(
     body: ResolvedPaymentRequest,
     external_id: str,
     estimate: models.TransactionEstimateResponse,
-) -> PaymentParams:
+) -> PaymentParams[PaymentIntentCreateParams]:
     totals = compute_charge_totals(body, estimate)
     metadata = build_kintsugi_metadata(external_id, estimate, totals)
     metadata["checkout_flow"] = "embedded"
 
-    params: dict = {
+    params: PaymentIntentCreateParams = {
         "amount": totals.charge_cents,
         "currency": body.currency.lower(),
         "automatic_payment_methods": {"enabled": True},
@@ -109,18 +117,9 @@ def build_payment_intent_params(
     if body.customer.email:
         params["receipt_email"] = body.customer.email
 
-    if body.customer.name and body.shipping_address.street_1:
-        params["shipping"] = {
-            "name": body.customer.name,
-            "address": {
-                "line1": body.shipping_address.street_1,
-                "line2": body.shipping_address.street_2,
-                "city": body.shipping_address.city,
-                "state": body.shipping_address.state,
-                "postal_code": body.shipping_address.postal_code,
-                "country": body.shipping_address.country,
-            },
-        }
+    shipping = build_shipping(body)
+    if shipping:
+        params["shipping"] = shipping
 
     return PaymentParams(params, totals)
 
@@ -141,6 +140,20 @@ async def resolve_payment_request(
         amount=line_item.amount,
     )
     return ResolvedPaymentRequest(**request_fields, line_items=[line_item])
+
+
+def require_same_origin(url: str, base_url: str) -> str:
+    """Reject redirect URLs that leave this app's origin.
+
+    Stripe sends the buyer to `success_url` and `cancel_url` as given, so an
+    arbitrary value would turn this endpoint into an open redirect.
+    """
+    candidate, base = urlsplit(url), urlsplit(base_url)
+    if (candidate.scheme, candidate.netloc) != (base.scheme, base.netloc):
+        raise HTTPException(
+            status_code=400, detail="Redirect URLs must use this app's origin"
+        )
+    return url
 
 
 def tax_breakdown_from_totals(totals, tax_rate: str | None) -> TaxBreakdown:
@@ -165,8 +178,6 @@ async def stripe_payment(
     )
     params, totals = build_payment_intent_params(payment_request, external_id, estimate)
 
-    # The Stripe SDK types params as a TypedDict; we build a plain dict.
-    # pyrefly: ignore[bad-argument-type]
     payment_intent = await client.v1.payment_intents.create_async(params)
     if not payment_intent.client_secret:
         raise HTTPException(
@@ -202,11 +213,15 @@ async def stripe_checkout(
         payment_request, request.app.state.kintsugi
     )
 
-    success_url = body.success_url or (
-        f"{str(request.base_url).rstrip('/')}/complete.html"
-        "?session_id={CHECKOUT_SESSION_ID}"
+    base_url = str(request.base_url).rstrip("/")
+    success_url = require_same_origin(
+        body.success_url
+        or f"{base_url}/complete.html?session_id={{CHECKOUT_SESSION_ID}}",
+        base_url,
     )
-    cancel_url = body.cancel_url or f"{str(request.base_url).rstrip('/')}/hosted.html"
+    cancel_url = require_same_origin(
+        body.cancel_url or f"{base_url}/hosted.html", base_url
+    )
 
     params, totals = build_checkout_session_params(
         payment_request,
@@ -216,8 +231,6 @@ async def stripe_checkout(
         cancel_url=cancel_url,
     )
 
-    # The Stripe SDK types params as a TypedDict; we build a plain dict.
-    # pyrefly: ignore[bad-argument-type]
     session = await client.v1.checkout.sessions.create_async(params)
     if not session.url:
         raise HTTPException(status_code=500, detail="Checkout session missing URL")
