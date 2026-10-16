@@ -1,3 +1,7 @@
+import hashlib
+import hmac
+import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,46 +21,105 @@ REQUEST_BODY = {
 
 
 @mark.parametrize(
-    ("override", "expected_status", "expected_success_url"),
+    "override",
     [
-        ({}, 200, "http://testserver/complete.html?session_id={CHECKOUT_SESSION_ID}"),
-        (
-            {
-                "success_url": "http://testserver/done",
-                "cancel_url": "http://testserver/",
-            },
-            200,
-            "http://testserver/done",
-        ),
-        ({"success_url": "https://evil.test/phish"}, 400, None),
-        ({"cancel_url": "https://evil.test/phish"}, 400, None),
+        {},
+        {
+            "success_url": "https://shop.test/done",
+            "cancel_url": "https://shop.test/back",
+        },
     ],
-    ids=["defaults", "same-origin", "foreign-success", "foreign-cancel"],
+    ids=["defaults", "configured-origin"],
 )
 @patch("main.estimate_tax", new_callable=AsyncMock)
 @patch("main.client")
-def test_checkout_redirect_urls_must_stay_on_origin(
+def test_checkout_accepts_configured_redirect_origin(
     stripe_client: MagicMock,
     estimate_tax: AsyncMock,
     estimate: models.TransactionEstimateResponse,
     override: dict[str, str],
-    expected_status: int,
-    expected_success_url: str | None,
 ) -> None:
     estimate_tax.return_value = ("est_1", estimate)
     create = AsyncMock(
         return_value=SimpleNamespace(id="cs_1", url="https://stripe.test/pay")
     )
     stripe_client.v1.checkout.sessions.create_async = create
+    expected = {
+        "success_url": "https://shop.test/complete.html?session_id={CHECKOUT_SESSION_ID}",
+        "cancel_url": "https://shop.test/hosted.html",
+        **override,
+    }
 
     with TestClient(main.app) as http:
         response = http.post("/stripe/checkout", json={**REQUEST_BODY, **override})
 
-    assert response.status_code == expected_status
-    if expected_success_url:
-        assert create.call_args_list[0].args[0]["success_url"] == expected_success_url
-    else:
-        create.assert_not_awaited()
+    assert response.status_code == 200
+    sent = create.call_args_list[0].args[0]
+    assert (sent["success_url"], sent["cancel_url"]) == (
+        expected["success_url"],
+        expected["cancel_url"],
+    )
+
+
+@mark.parametrize(
+    ("override", "headers"),
+    [
+        ({"success_url": "https://evil.test/phish"}, {}),
+        ({"cancel_url": "https://evil.test/phish"}, {}),
+        ({"success_url": "http://evil.test/phish"}, {"Host": "evil.test"}),
+        ({"cancel_url": "http://evil.test/phish"}, {"Host": "evil.test"}),
+    ],
+    ids=[
+        "foreign-success",
+        "foreign-cancel",
+        "spoofed-host-success",
+        "spoofed-host-cancel",
+    ],
+)
+@patch("main.estimate_tax", new_callable=AsyncMock)
+@patch("main.client")
+def test_checkout_rejects_foreign_redirect_origin(
+    stripe_client: MagicMock,
+    estimate_tax: AsyncMock,
+    estimate: models.TransactionEstimateResponse,
+    override: dict[str, str],
+    headers: dict[str, str],
+) -> None:
+    estimate_tax.return_value = ("est_1", estimate)
+    create = AsyncMock()
+    stripe_client.v1.checkout.sessions.create_async = create
+
+    with TestClient(main.app) as http:
+        response = http.post(
+            "/stripe/checkout", json={**REQUEST_BODY, **override}, headers=headers
+        )
+
+    assert response.status_code == 400
+    create.assert_not_awaited()
+
+
+def test_webhook_accepts_correctly_signed_event() -> None:
+    payload = json.dumps(
+        {
+            "id": "evt_1",
+            "object": "event",
+            "type": "customer.created",
+            "data": {"object": {}},
+        }
+    )
+    timestamp = int(time.time())
+    signature = hmac.new(
+        b"whsec_unit", f"{timestamp}.{payload}".encode(), hashlib.sha256
+    ).hexdigest()
+
+    with TestClient(main.app) as http:
+        response = http.post(
+            "/stripe/webhook",
+            content=payload,
+            headers={"Stripe-Signature": f"t={timestamp},v1={signature}"},
+        )
+
+    assert response.status_code == 200
 
 
 @mark.parametrize(

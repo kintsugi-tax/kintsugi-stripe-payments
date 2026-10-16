@@ -9,7 +9,7 @@ from pricing import (
     ChargeTotals,
     PaymentParams,
     build_kintsugi_metadata,
-    build_shipping_address,
+    build_shipping,
     compute_charge_totals,
     iter_product_lines,
     stripe_product_code,
@@ -96,14 +96,14 @@ def build_checkout_session_params(
     if body.customer.email:
         params["customer_email"] = body.customer.email
 
-    # Stripe requires a recipient name and a street line to accept shipping.
-    if body.customer.name and body.shipping_address.street_1:
+    shipping = build_shipping(body)
+    if shipping:
         params["payment_intent_data"]["shipping"] = {
-            "name": body.customer.name,
+            "name": shipping["name"],
             # Stripe's checkout and PaymentIntent address types are separate
             # TypedDicts with the same keys, so copy into the checkout one.
             "address": SessionCreateParamsPaymentIntentDataShippingAddress(
-                **build_shipping_address(body.shipping_address)
+                **shipping["address"]
             ),
         }
 

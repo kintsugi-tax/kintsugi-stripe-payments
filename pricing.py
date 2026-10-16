@@ -137,9 +137,8 @@ def build_shipping_address(
 ) -> PaymentIntentCreateParamsShippingAddress:
     """Build a Stripe address that omits the keys the request left empty.
 
-    Stripe types these keys as `str`, not `str | None`. Stripe also treats a
-    missing key as unset, so omitting an empty key sends the same thing as
-    `None` did, without an empty string that would clear a stored value.
+    Stripe types these keys as `str` and treats a missing key as unset. An empty
+    string would clear a stored value, so empty keys are left out.
     """
     shipping_address: PaymentIntentCreateParamsShippingAddress = {
         "state": address.state,

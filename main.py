@@ -142,17 +142,20 @@ async def resolve_payment_request(
     return ResolvedPaymentRequest(**request_fields, line_items=[line_item])
 
 
-def require_same_origin(url: str, base_url: str) -> str:
-    """Reject redirect URLs that leave this app's origin.
+def require_allowed_origin(url: str) -> str:
+    """Reject redirect URLs whose origin is not in `allowed_redirect_origins`.
 
     Stripe sends the buyer to `success_url` and `cancel_url` as given, so an
-    arbitrary value would turn this endpoint into an open redirect.
+    arbitrary value would turn this endpoint into an open redirect. The allowed
+    origins come from settings because the `Host` header is caller-controlled.
     """
-    candidate, base = urlsplit(url), urlsplit(base_url)
-    if (candidate.scheme, candidate.netloc) != (base.scheme, base.netloc):
-        raise HTTPException(
-            status_code=400, detail="Redirect URLs must use this app's origin"
-        )
+    candidate = urlsplit(url)
+    allowed = {
+        (origin.scheme, origin.netloc)
+        for origin in map(urlsplit, settings.allowed_redirect_origins)
+    }
+    if (candidate.scheme, candidate.netloc) not in allowed:
+        raise HTTPException(status_code=400, detail="Redirect URL origin not allowed")
     return url
 
 
@@ -213,15 +216,12 @@ async def stripe_checkout(
         payment_request, request.app.state.kintsugi
     )
 
-    base_url = str(request.base_url).rstrip("/")
-    success_url = require_same_origin(
+    base_url = settings.allowed_redirect_origins[0].rstrip("/")
+    success_url = require_allowed_origin(
         body.success_url
-        or f"{base_url}/complete.html?session_id={{CHECKOUT_SESSION_ID}}",
-        base_url,
+        or f"{base_url}/complete.html?session_id={{CHECKOUT_SESSION_ID}}"
     )
-    cancel_url = require_same_origin(
-        body.cancel_url or f"{base_url}/hosted.html", base_url
-    )
+    cancel_url = require_allowed_origin(body.cancel_url or f"{base_url}/hosted.html")
 
     params, totals = build_checkout_session_params(
         payment_request,

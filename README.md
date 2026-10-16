@@ -355,7 +355,7 @@ Request body (both payment endpoints):
 }
 ```
 
-`amount` is the **line subtotal** in dollars. Hosted checkout accepts optional `success_url` and `cancel_url`, which must use the same origin as the request (the API returns `400` otherwise).
+`amount` is the **line subtotal** in dollars. Hosted checkout accepts optional `success_url` and `cancel_url`, which must use an origin in `ALLOWED_REDIRECT_ORIGINS` (the API returns `400` otherwise).
 
 ### Code map
 
@@ -374,7 +374,7 @@ This is a sample, so a few choices keep the demo short and are not production de
 
 * **The client sets the price.** `line_items[].amount` comes from the request body, so any caller can choose what they pay. In production, look up the price server-side from the Stripe product or your catalog using `external_product_id`, and ignore any client-supplied amount.
 * **No authentication on the payment routes.** `POST /stripe/payments` and `POST /stripe/checkout` are open. Put them behind your own user session and add rate limiting before you expose them.
-* **Redirect URLs are same-origin only.** `success_url` and `cancel_url` must match the request origin. Behind a proxy that rewrites the host, make sure `request.base_url` reflects the public URL, or the check rejects valid requests.
+* **Redirect URLs use a server-side allowlist.** `success_url` and `cancel_url` must use an origin listed in `ALLOWED_REDIRECT_ORIGINS`, and the first entry builds the default URLs. The check never reads the `Host` header, because the caller controls it. Add your frontend's origin to the list if it differs from the API's.
 * **Webhooks are verified and re-fetched.** A bad or missing `Stripe-Signature` returns `400`. The handler re-fetches the PaymentIntent and only syncs to Kintsugi when its status is `succeeded`.
 
 ### Environment variables
@@ -387,6 +387,7 @@ This is a sample, so a few choices keep the demo short and are not production de
 | `KINTSUGI_API_KEY` | Kintsugi API key |
 | `KINTSUGI_ORGANIZATION_ID` | Org ID (`orgn_…`) |
 | `STRIPE_PASS_PROCESSING_FEE_TO_CUSTOMER` | Gross up charge for Stripe fees (default `true`) |
+| `ALLOWED_REDIRECT_ORIGINS` | JSON list of origins allowed for checkout redirect URLs (default `["http://localhost:8000"]`) |
 | `LOG_LEVEL` / `LOG_FORMAT` | Structured logging (`console` or `json`) |
 
 `.env.example` holds placeholders only. Replace them with your own test-mode keys, and never commit a real key.

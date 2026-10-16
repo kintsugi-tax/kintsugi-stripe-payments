@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   test:
+    # GitHub-hosted on purpose: this repo is public and `pull_request` runs fork
+    # code, so it must not run on the org's self-hosted runners.
     runs-on: ubuntu-latest
     steps:
       - name: Check out the code
