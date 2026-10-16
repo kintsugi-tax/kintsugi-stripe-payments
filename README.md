@@ -387,7 +387,7 @@ This is a sample, so a few choices keep the demo short and are not production de
 | `KINTSUGI_API_KEY` | Kintsugi API key |
 | `KINTSUGI_ORGANIZATION_ID` | Org ID (`orgn_…`) |
 | `STRIPE_PASS_PROCESSING_FEE_TO_CUSTOMER` | Gross up charge for Stripe fees (default `true`) |
-| `ALLOWED_REDIRECT_ORIGINS` | JSON list of origins allowed for checkout redirect URLs (default `["http://localhost:8000"]`) |
+| `ALLOWED_REDIRECT_ORIGINS` | JSON list of origins allowed for checkout redirect URLs (default `["http://localhost:8000", "http://127.0.0.1:8000"]`; uvicorn prints the `127.0.0.1` address) |
 | `LOG_LEVEL` / `LOG_FORMAT` | Structured logging (`console` or `json`) |
 
 `.env.example` holds placeholders only. Replace them with your own test-mode keys, and never commit a real key.
