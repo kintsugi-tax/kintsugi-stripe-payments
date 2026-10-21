@@ -2,9 +2,14 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from kintsugi_tax_platform_sdk import models
+from stripe.params import (
+    PaymentIntentCreateParamsAmountDetailsLineItem,
+    PaymentIntentCreateParamsShipping,
+    PaymentIntentCreateParamsShippingAddress,
+)
 
 from fees import processing_fee_cents
-from schemas import LineItem, ResolvedPaymentRequest
+from schemas import Address, LineItem, ResolvedPaymentRequest
 from tax import build_payment_intent_metadata, dollars_to_cents
 
 
@@ -17,8 +22,8 @@ class ChargeTotals:
     charge_cents: int
 
 
-class PaymentParams(NamedTuple):
-    params: dict
+class PaymentParams[ParamsT](NamedTuple):
+    params: ParamsT
     totals: ChargeTotals
 
 
@@ -103,8 +108,8 @@ def build_payment_intent_amount_details(
     body: ResolvedPaymentRequest,
     estimate: models.TransactionEstimateResponse,
     totals: ChargeTotals,
-) -> list[dict]:
-    line_items = [
+) -> list[PaymentIntentCreateParamsAmountDetailsLineItem]:
+    line_items: list[PaymentIntentCreateParamsAmountDetailsLineItem] = [
         {
             "product_name": line.product_name,
             "product_code": stripe_product_code(line.request_item.external_product_id),
@@ -125,3 +130,37 @@ def build_payment_intent_amount_details(
             }
         )
     return line_items
+
+
+def build_shipping_address(
+    address: Address,
+) -> PaymentIntentCreateParamsShippingAddress:
+    """Build a Stripe address that omits the keys the request left empty.
+
+    Stripe types these keys as `str` and treats a missing key as unset. An empty
+    string would clear a stored value, so empty keys are left out.
+    """
+    shipping_address: PaymentIntentCreateParamsShippingAddress = {
+        "state": address.state,
+        "postal_code": address.postal_code,
+        "country": address.country,
+    }
+    if address.street_1:
+        shipping_address["line1"] = address.street_1
+    if address.street_2:
+        shipping_address["line2"] = address.street_2
+    if address.city:
+        shipping_address["city"] = address.city
+    return shipping_address
+
+
+def build_shipping(
+    body: ResolvedPaymentRequest,
+) -> PaymentIntentCreateParamsShipping | None:
+    # Stripe requires a recipient name and a street line to accept shipping.
+    if not (body.customer.name and body.shipping_address.street_1):
+        return None
+    return {
+        "name": body.customer.name,
+        "address": build_shipping_address(body.shipping_address),
+    }

@@ -21,6 +21,14 @@ async def handle_payment_intent_succeeded(
     payment_intent = await fetch_payment_intent_for_sync(
         stripe_client, payment_intent.id
     )
+    # The event body can be stale or replayed, so trust only the re-fetched status.
+    if payment_intent.status != "succeeded":
+        log.warning(
+            "payment_intent.sync_skipped",
+            reason="not_succeeded",
+            status=payment_intent.status,
+        )
+        return
     metadata = stripe_metadata_dict(payment_intent)
     log.info(
         "payment_intent.succeeded",
