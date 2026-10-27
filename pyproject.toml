@@ -44,3 +44,7 @@ search-path = ["."]
 
 [tool.pyrefly.errors]
 missing-import = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
